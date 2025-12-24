@@ -323,6 +323,28 @@ def wait_for_kaggle_score(
     return None
 
 
+def load_genomes_from_summary(path: Path, limit: Optional[int]) -> List[Genome]:
+    with path.open("r", encoding="utf-8") as fp:
+        payload = json.load(fp)
+    genomes: List[Genome] = []
+    for entry in payload[: limit]:
+        gdict = entry.get("genome", {})
+        genome = Genome(
+            num_layers=gdict.get("num_layers", len(gdict.get("layer_widths", [])) or 1),
+            layer_widths=list(gdict.get("layer_widths", [])),
+            activation=gdict.get("activation", "relu"),
+            dropout=float(gdict.get("dropout", 0.0)),
+            optimizer=gdict.get("optimizer", "adam"),
+            learning_rate=float(gdict.get("learning_rate", 1e-3)),
+            weight_decay=float(gdict.get("weight_decay", 0.0)),
+            batch_size=int(gdict.get("batch_size", 128)),
+            epochs=int(gdict.get("epochs", 20)),
+            fitness=float(entry.get("val_accuracy", gdict.get("fitness", -math.inf))),
+        )
+        genomes.append(genome)
+    return genomes
+
+
 # --- Main entry point ------------------------------------------------------ #
 
 
@@ -340,6 +362,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--top-k", type=int, default=2, help="Number of top genomes to retrain and submit.")
     parser.add_argument("--seed", type=int, default=1337)
     parser.add_argument("--no-kaggle", action="store_true", help="Skip Kaggle submissions even if CLI exists.")
+    parser.add_argument(
+        "--resume-summary",
+        type=str,
+        help="Optional path to ga_search_summary.json from a previous run to seed the population.",
+    )
+    parser.add_argument(
+        "--resume-top-n",
+        type=int,
+        default=None,
+        help="When resuming, number of genomes to load from the summary (default: all available).",
+    )
     parser.add_argument(
         "--kaggle-score-timeout",
         type=int,
@@ -389,7 +422,20 @@ def main() -> None:
     device = resolve_device()
     print(f"Using device: {device}")
 
-    population = [random_genome() for _ in range(args.population)]
+    population: List[Genome] = []
+    if args.resume_summary:
+        summary_path = Path(args.resume_summary)
+        if not summary_path.exists():
+            raise FileNotFoundError(f"Resume summary not found: {summary_path}")
+        limit = args.resume_top_n
+        resumed = load_genomes_from_summary(summary_path, limit)
+        if not resumed:
+            print(f"[warn] No genomes recovered from {summary_path}; starting fresh.")
+        else:
+            print(f"Loaded {len(resumed)} genomes from {summary_path} to seed the population.")
+            population.extend(resumed[: args.population])
+    while len(population) < args.population:
+        population.append(random_genome())
     evolved = evolve(
         population,
         X_train,
