@@ -13,7 +13,6 @@ Workflow:
 from __future__ import annotations
 
 import argparse
-import csv
 import json
 import math
 import random
@@ -22,13 +21,15 @@ import subprocess
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 import pandas as pd
 import torch
 from torch import nn
 from torch.utils.data import DataLoader, TensorDataset
+
+from kaggle_submissions import list_kaggle_submissions
 
 KAGGLE_COMPETITION = "spaceship-titanic"
 ACTIVATIONS = {
@@ -286,19 +287,6 @@ def try_kaggle_submit(file_path: Path, message: str) -> bool:
     print(result.stdout)
     return True
 
-
-def list_kaggle_submissions() -> List[Dict[str, str]]:
-    kaggle_cli = shutil.which("kaggle")
-    if kaggle_cli is None:
-        return []
-    cmd = f"kaggle competitions submissions -c {KAGGLE_COMPETITION} --csv"
-    result = subprocess.run(["bash", "-lc", cmd], capture_output=True, text=True)
-    if result.returncode != 0 or not result.stdout.strip():
-        return []
-    reader = csv.DictReader(result.stdout.splitlines())
-    return list(reader)
-
-
 def extract_score(row: Dict[str, str]) -> Optional[float]:
     for key in ("publicScore", "PublicScore"):
         score_str = row.get(key)
@@ -319,7 +307,10 @@ def wait_for_kaggle_score(
         return None
     deadline = time.time() + timeout_seconds
     while time.time() < deadline:
-        submissions = list_kaggle_submissions()
+        submissions = list_kaggle_submissions(KAGGLE_COMPETITION)
+        if submissions is None:
+            print("[warn] Skipping score polling due to Kaggle CLI/network issue.")
+            return None
         for row in submissions:
             desc = row.get("description") or row.get("Description")
             if desc == description:
