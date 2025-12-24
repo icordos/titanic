@@ -487,6 +487,12 @@ def main() -> None:
         )
 
     summary_path = Path("models") / "ga_search_summary.json"
+    backup_path = None
+    if summary_path.exists():
+        timestamp = time.strftime("%Y%m%d-%H%M%S")
+        backup_path = summary_path.with_name(f"ga_search_summary_{timestamp}.json")
+        summary_path.replace(backup_path)
+        print(f"Backed up previous summary to {backup_path}")
     with summary_path.open("w", encoding="utf-8") as fp:
         json.dump(metadata, fp, indent=2)
     print(f"Wrote GA summary to {summary_path}")
