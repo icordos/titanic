@@ -1,36 +1,46 @@
 #!/usr/bin/env python3
 """Utilities for inspecting recent Kaggle submissions.
 
-This module exports `list_kaggle_submissions` for reuse in training scripts and
-can also be invoked directly to print the submission table for debugging.
+Uses the Kaggle Python API directly so we can avoid CLI regressions (e.g.,
+page_number keyword errors) and reuse the logic from other scripts.
 """
 from __future__ import annotations
 
 import argparse
-import csv
-import shutil
-import subprocess
 from typing import Dict, List, Optional
 
+from kaggle.api.kaggle_api_extended import KaggleApi
 
-def list_kaggle_submissions(competition: str) -> Optional[List[Dict[str, str]]]:
-    kaggle_cli = shutil.which("kaggle")
-    if kaggle_cli is None:
-        print("[warn] Kaggle CLI not found in PATH.")
+
+def _submission_to_dict(submission) -> Dict[str, str]:
+    status = getattr(submission.status, "name", "") if submission.status else ""
+    date_val = submission.date.isoformat() if submission.date else ""
+    return {
+        "ref": str(submission.ref),
+        "description": submission.description,
+        "publicScore": submission.public_score,
+        "privateScore": submission.private_score,
+        "date": date_val,
+        "status": status,
+        "fileName": submission.file_name,
+        "teamName": submission.team_name,
+        "submittedBy": submission.submitted_by,
+    }
+
+
+def list_kaggle_submissions(competition: str, page_size: int = 50) -> Optional[List[Dict[str, str]]]:
+    api = KaggleApi()
+    try:
+        api.authenticate()
+    except Exception as exc:  # pragma: no cover - depends on local config
+        print(f"[warn] Kaggle API authentication failed: {exc}")
         return None
-    cmd = f"kaggle competitions submissions -c {competition} --csv"
-    result = subprocess.run(["bash", "-lc", cmd], capture_output=True, text=True)
-    if result.returncode != 0:
-        print("[warn] Unable to fetch Kaggle submissions list:")
-        if result.stdout:
-            print(result.stdout.strip())
-        if result.stderr:
-            print(result.stderr.strip())
+    try:
+        submissions = api.competition_submissions(competition, page_size=page_size)
+    except Exception as exc:  # pragma: no cover - network errors
+        print(f"[warn] Unable to fetch Kaggle submissions list: {exc}")
         return None
-    if not result.stdout.strip():
-        return []
-    reader = csv.DictReader(result.stdout.splitlines())
-    return list(reader)
+    return [_submission_to_dict(sub) for sub in submissions]
 
 
 def main() -> None:
