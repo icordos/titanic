@@ -19,8 +19,12 @@ import numpy as np
 import pandas as pd
 
 SPEND_COLUMNS = ["RoomService", "FoodCourt", "ShoppingMall", "Spa", "VRDeck"]
-ONE_HOT_CATEGORICALS = ("HomePlanet", "Destination", "CabinDeck", "CabinSide")
+ONE_HOT_CATEGORICALS = ("HomePlanet", "Destination", "CabinDeck", "CabinSide", "CabinZone", "Route")
 HIGH_CARDINALITY_DROP = {"Cabin"}
+ROUTE_TOP_K = 5
+DECK_ORDER = {"A": 0, "B": 1, "C": 2, "D": 3, "E": 4, "F": 5, "G": 6, "T": 7}
+CABIN_ZONE_BINS = (-np.inf, 300, 600, 900, np.inf)
+CABIN_ZONE_LABELS = ("front", "mid", "rear", "deep")
 
 
 def clip_spend_inputs(df: pd.DataFrame, quantile: float = 0.995) -> None:
@@ -83,6 +87,78 @@ def add_spending_features(df: pd.DataFrame) -> None:
     df["LogTotalSpend"] = np.log1p(df["TotalSpend"])
     df["NonZeroSpendCount"] = (spend_df > 0).sum(axis=1)
     df["AllZeroSpend"] = (df["TotalSpend"] == 0).astype(float)
+
+
+def add_spend_usage_features(df: pd.DataFrame) -> None:
+    if "TotalSpend" not in df.columns:
+        return
+    total = df["TotalSpend"].fillna(0.0)
+    group_sizes = df.get("GroupSize")
+    if group_sizes is not None:
+        denom = group_sizes.replace(0, np.nan)
+        spend_per = total / denom
+        spend_per = spend_per.fillna(total)
+        df["SpendPerPassenger"] = spend_per
+    else:
+        df["SpendPerPassenger"] = total
+
+    total_safe = total.replace(0, np.nan)
+    for col in SPEND_COLUMNS:
+        if col not in df.columns:
+            continue
+        df[f"{col}Used"] = (df[col].fillna(0.0) > 0).astype(float)
+        share = df[col] / total_safe
+        share = share.replace([np.inf, -np.inf], np.nan).fillna(0.0)
+        df[f"{col}Share"] = share
+
+
+def add_cabin_location_features(df: pd.DataFrame) -> None:
+    if "CabinDeck" not in df.columns:
+        return
+    df["DeckRank"] = df["CabinDeck"].map(DECK_ORDER)
+    if "CabinSide" in df.columns:
+        df["IsPortSide"] = (df["CabinSide"] == "P").astype(float)
+        df["IsStarboardSide"] = (df["CabinSide"] == "S").astype(float)
+    if "CabinNum" in df.columns:
+        df["CabinZone"] = pd.cut(df["CabinNum"], bins=CABIN_ZONE_BINS, labels=CABIN_ZONE_LABELS)
+
+
+def add_group_age_features(df: pd.DataFrame) -> None:
+    if "Age" not in df.columns or "GroupId" not in df.columns:
+        return
+    ages = df["Age"]
+    grouped = df.groupby("GroupId", dropna=False)
+    df["GroupAgeMean"] = grouped["Age"].transform("mean")
+    df["GroupAgeStd"] = grouped["Age"].transform("std").fillna(0.0)
+    df["GroupAgeRange"] = grouped["Age"].transform(lambda s: s.max() - s.min()).fillna(0.0)
+    df["AgeMinusGroupMean"] = ages - df["GroupAgeMean"]
+
+    if "FamilySize" in df.columns:
+        df["IsFamilyLarge"] = (df["FamilySize"] > 2).astype(float)
+        if "GroupSize" in df.columns:
+            denom = df["GroupSize"].replace(0, np.nan)
+            df["FamilyShareOfGroup"] = (df["FamilySize"] / denom).fillna(0.0)
+            df["GroupMinusFamilySize"] = df["GroupSize"] - df["FamilySize"]
+            df["GroupOutnumbersFamily"] = (df["GroupSize"] > df["FamilySize"]).astype(float)
+
+
+def add_route_feature(df: pd.DataFrame) -> None:
+    if "HomePlanet" not in df.columns or "Destination" not in df.columns:
+        return
+    home = df["HomePlanet"].fillna("Unknown")
+    dest = df["Destination"].fillna("Unknown")
+    routes = home + "_" + dest
+    top_routes = routes.value_counts().index[:ROUTE_TOP_K]
+    df["Route"] = np.where(routes.isin(top_routes), routes, "Other")
+
+
+def add_cryo_spend_mismatch(df: pd.DataFrame) -> None:
+    if "CryoSleep" not in df.columns or "TotalSpend" not in df.columns:
+        return
+    cryo = df["CryoSleep"].fillna(0.0)
+    total = df["TotalSpend"].fillna(0.0)
+    mismatch = ((cryo >= 0.5) & (total > 0)) | ((cryo < 0.5) & (total == 0))
+    df["CryoSpendMismatch"] = mismatch.astype(float)
 
 
 def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
@@ -188,6 +264,11 @@ def main() -> None:
     features_df = enriched_df.drop(columns=drop_set, errors="ignore")
 
     impute_targeted(features_df)
+    add_spend_usage_features(features_df)
+    add_cabin_location_features(features_df)
+    add_group_age_features(features_df)
+    add_route_feature(features_df)
+    add_cryo_spend_mismatch(features_df)
 
     numeric_cols = features_df.select_dtypes(include=[np.number]).columns
     categorical_cols = [col for col in features_df.columns if col not in numeric_cols]
