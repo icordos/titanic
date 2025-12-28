@@ -87,6 +87,50 @@ def split_train_val(X: np.ndarray, y: np.ndarray, val_ratio: float, seed: int) -
     return X[train_idx], y[train_idx], X[val_idx], y[val_idx]
 
 
+def stratified_kfold_indices(y: np.ndarray, folds: int, seed: int) -> List[Tuple[np.ndarray, np.ndarray]]:
+    if folds < 2:
+        raise ValueError("folds must be >= 2 for stratified_kfold_indices")
+    rng = np.random.default_rng(seed)
+    y = y.astype(int)
+    unique_classes = np.unique(y)
+    fold_bins: List[List[np.ndarray]] = [[] for _ in range(folds)]
+    for cls in unique_classes:
+        class_indices = np.where(y == cls)[0]
+        rng.shuffle(class_indices)
+        splits = np.array_split(class_indices, folds)
+        for fold_idx, split in enumerate(splits):
+            if split.size > 0:
+                fold_bins[fold_idx].append(split)
+    folds_list: List[Tuple[np.ndarray, np.ndarray]] = []
+    all_indices = np.arange(len(y))
+    for fold_idx in range(folds):
+        if fold_bins[fold_idx]:
+            val_idx = np.concatenate(fold_bins[fold_idx])
+        else:
+            val_idx = np.array([], dtype=int)
+        train_mask = np.ones(len(y), dtype=bool)
+        train_mask[val_idx] = False
+        train_idx = all_indices[train_mask]
+        folds_list.append((train_idx, val_idx))
+    return folds_list
+
+
+def build_cv_splits(
+    X: np.ndarray,
+    y: np.ndarray,
+    folds: int,
+    val_ratio: float,
+    seed: int,
+) -> List[Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]]:
+    if folds <= 1:
+        X_train, y_train, X_val, y_val = split_train_val(X, y, val_ratio=val_ratio, seed=seed)
+        return [(X_train, y_train, X_val, y_val)]
+    splits = []
+    for train_idx, val_idx in stratified_kfold_indices(y, folds, seed):
+        splits.append((X[train_idx], y[train_idx], X[val_idx], y[val_idx]))
+    return splits
+
+
 def make_loader(X: np.ndarray, y: np.ndarray, batch_size: int, shuffle: bool) -> DataLoader:
     features = torch.from_numpy(X).float()
     labels = torch.from_numpy(y).float().unsqueeze(1)
@@ -135,6 +179,20 @@ def train_candidate(
             optimizer.step()
 
     return evaluate_accuracy(model, val_loader, device)
+
+
+def evaluate_genome_cv(
+    genome: Genome,
+    cv_splits: Sequence[Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]],
+    device: torch.device,
+) -> Tuple[float, List[float]]:
+    scores: List[float] = []
+    for X_train, y_train, X_val, y_val in cv_splits:
+        score = train_candidate(genome, X_train, y_train, X_val, y_val, device)
+        scores.append(score)
+    if not scores:
+        return -math.inf, []
+    return float(np.mean(scores)), scores
 
 
 def evaluate_accuracy(model: nn.Module, loader: DataLoader, device: torch.device) -> float:
@@ -197,10 +255,7 @@ def mutate(genome: Genome, macro_rate: float) -> Genome:
 
 def evolve(
     population: List[Genome],
-    X_train: np.ndarray,
-    y_train: np.ndarray,
-    X_val: np.ndarray,
-    y_val: np.ndarray,
+    cv_splits: Sequence[Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]],
     device: torch.device,
     generations: int,
     macro_rate: float,
@@ -209,11 +264,17 @@ def evolve(
     for gen in range(generations):
         print(f"Generation {gen + 1}/{generations}")
         for genome in population:
-            genome.fitness = train_candidate(genome, X_train, y_train, X_val, y_val, device)
+            avg_fitness, fold_scores = evaluate_genome_cv(genome, cv_splits, device)
+            genome.fitness = avg_fitness
             print(
                 f"  candidate layers={genome.layer_widths[:genome.num_layers]} act={genome.activation}"
                 f" lr={genome.learning_rate:.4f} batch={genome.batch_size} epochs={genome.epochs}"
                 f" -> val_acc={genome.fitness:.4f}"
+                + (
+                    f" (folds: {', '.join(f'{score:.4f}' for score in fold_scores)})"
+                    if len(fold_scores) > 1
+                    else ""
+                )
             )
         population.sort(key=lambda g: g.fitness, reverse=True)
         print(f"  best accuracy this gen: {population[0].fitness:.4f}")
@@ -359,6 +420,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--elite-count", type=int, default=2)
     parser.add_argument("--macro-mutation-rate", type=float, default=0.3)
     parser.add_argument("--val-ratio", type=float, default=0.2)
+    parser.add_argument(
+        "--cv-folds",
+        type=int,
+        default=1,
+        help="Number of stratified CV folds to average for GA fitness (1 = single holdout).",
+    )
     parser.add_argument("--top-k", type=int, default=2, help="Number of top genomes to retrain and submit.")
     parser.add_argument("--seed", type=int, default=1337)
     parser.add_argument("--no-kaggle", action="store_true", help="Skip Kaggle submissions even if CLI exists.")
@@ -418,7 +485,12 @@ def main() -> None:
     if len(passenger_ids) != len(test_features):
         raise ValueError("Mismatch between raw test rows and prepared test features")
 
-    X_train, y_train, X_val, y_val = split_train_val(X, y, val_ratio=args.val_ratio, seed=args.seed)
+    cv_splits = build_cv_splits(X, y, folds=args.cv_folds, val_ratio=args.val_ratio, seed=args.seed)
+    if args.cv_folds > 1:
+        print(f"Using stratified {args.cv_folds}-fold CV for GA fitness.")
+    else:
+        val_count = cv_splits[0][2].shape[0]
+        print(f"Using single holdout with {val_count} validation rows (val_ratio={args.val_ratio:.2f}).")
     device = resolve_device()
     print(f"Using device: {device}")
 
@@ -438,10 +510,7 @@ def main() -> None:
         population.append(random_genome())
     evolved = evolve(
         population,
-        X_train,
-        y_train,
-        X_val,
-        y_val,
+        cv_splits=cv_splits,
         device=device,
         generations=args.generations,
         macro_rate=args.macro_mutation_rate,
