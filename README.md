@@ -32,3 +32,13 @@ python scripts/train_ga_nn.py \
 - After each submission the script polls `kaggle competitions submissions` (configurable via `--kaggle-score-timeout` / `--kaggle-score-interval`) and stores the public score plus the description tag inside `models/ga_search_summary.json` so next iterations can reuse leaderboard feedback even if you hit the daily submission cap. If the Kaggle CLI/network check fails the script logs a warning and skips the polling loop.
 - Debug the leaderboard polling manually with `python scripts/kaggle_submissions.py --competition spaceship-titanic`, which prints the same submission table the trainer queries.
 - To restart from previously submitted genomes, pass `--resume-summary models/ga_search_summary.json` (optionally paired with `--resume-top-n 5`). The GA seeds its new population with those stored architectures before filling the rest with fresh random candidates, letting you continue evolution exactly from the prior top performers.
+
+## Baseline Feature Augmentation
+Before launching the GA you can append predictions from deterministic baselines (logistic regression + gradient boosted stumps) using:
+```
+python scripts/add_baseline_predictions.py \
+  --train data/train_prepared.csv \
+  --test data/test_prepared.csv \
+  --target-column Transported
+```
+This script retrains each model on the prepared matrix, writes their probabilities to `LR_pred` / `GB_pred`, and overwrites the same CSVs so the GA automatically ingests the new columns. Run it whenever you refresh the prepared data to keep the auxiliary features in sync.
