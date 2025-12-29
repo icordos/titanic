@@ -23,6 +23,11 @@ def parse_args() -> argparse.Namespace:
         default=0.5,
         help="Probability threshold for Transported label (default: 0.5).",
     )
+    parser.add_argument(
+        "--keep-prob",
+        action="store_true",
+        help="Include the averaged probability column (TransportedProb) in the output CSV.",
+    )
     return parser.parse_args()
 
 
@@ -61,8 +66,8 @@ def main() -> None:
             "Transported": (mean_probs >= args.threshold),
         }
     )
-    # Store averaged probability for debugging purposes.
-    ensemble["TransportedProb"] = mean_probs
+    if args.keep_prob:
+        ensemble["TransportedProb"] = mean_probs
     output_path = Path(args.output)
     ensemble.to_csv(output_path, index=False)
     print(f"Wrote ensemble submission to {output_path}")
