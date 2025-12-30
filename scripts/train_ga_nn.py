@@ -159,7 +159,7 @@ def train_candidate(
     X_val: np.ndarray,
     y_val: np.ndarray,
     device: torch.device,
-) -> float:
+) -> Tuple[float, float]:
     train_loader = make_loader(X_train, y_train, genome.batch_size, shuffle=True)
     val_loader = make_loader(X_val, y_val, batch_size=1024, shuffle=False)
 
@@ -178,34 +178,45 @@ def train_candidate(
             loss.backward()
             optimizer.step()
 
-    return evaluate_accuracy(model, val_loader, device)
+    return evaluate_metrics(model, val_loader, device)
 
 
 def evaluate_genome_cv(
     genome: Genome,
     cv_splits: Sequence[Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]],
     device: torch.device,
-) -> Tuple[float, List[float]]:
-    scores: List[float] = []
+) -> Tuple[float, List[float], List[float]]:
+    accuracies: List[float] = []
+    log_losses: List[float] = []
     for X_train, y_train, X_val, y_val in cv_splits:
-        score = train_candidate(genome, X_train, y_train, X_val, y_val, device)
-        scores.append(score)
-    if not scores:
-        return -math.inf, []
-    return float(np.mean(scores)), scores
+        acc, log_loss = train_candidate(genome, X_train, y_train, X_val, y_val, device)
+        accuracies.append(acc)
+        log_losses.append(log_loss)
+    if not log_losses:
+        return math.inf, [], []
+    avg_log_loss = float(np.mean(log_losses))
+    return avg_log_loss, accuracies, log_losses
 
 
-def evaluate_accuracy(model: nn.Module, loader: DataLoader, device: torch.device) -> float:
+def evaluate_metrics(model: nn.Module, loader: DataLoader, device: torch.device) -> Tuple[float, float]:
     model.eval()
     correct = 0
     total = 0
+    log_loss_sum = 0.0
     with torch.no_grad():
         for xb, yb in loader:
             xb, yb = xb.to(device), yb.to(device)
-            preds = torch.sigmoid(model(xb)) >= 0.5
-            correct += (preds.float() == yb).sum().item()
+            logits = model(xb)
+            probs = torch.sigmoid(logits)
+            pred_labels = probs >= 0.5
+            correct += (pred_labels.float() == yb).sum().item()
             total += yb.numel()
-    return correct / max(1, total)
+            probs = torch.clamp(probs, min=1e-7, max=1 - 1e-7)
+            log_loss = -(yb * torch.log(probs) + (1 - yb) * torch.log(1 - probs))
+            log_loss_sum += log_loss.sum().item()
+    accuracy = correct / max(1, total)
+    avg_log_loss = log_loss_sum / max(1, total)
+    return accuracy, avg_log_loss
 
 
 # --- Genetic Algorithm ----------------------------------------------------- #
@@ -264,20 +275,16 @@ def evolve(
     for gen in range(generations):
         print(f"Generation {gen + 1}/{generations}")
         for genome in population:
-            avg_fitness, fold_scores = evaluate_genome_cv(genome, cv_splits, device)
-            genome.fitness = avg_fitness
+            avg_log_loss, fold_accs, fold_losses = evaluate_genome_cv(genome, cv_splits, device)
+            genome.fitness = -avg_log_loss  # Higher fitness = lower log loss
+            fold_desc = ", ".join(f"loss={loss:.4f}/acc={acc:.4f}" for acc, loss in zip(fold_accs, fold_losses))
             print(
                 f"  candidate layers={genome.layer_widths[:genome.num_layers]} act={genome.activation}"
                 f" lr={genome.learning_rate:.4f} batch={genome.batch_size} epochs={genome.epochs}"
-                f" -> val_acc={genome.fitness:.4f}"
-                + (
-                    f" (folds: {', '.join(f'{score:.4f}' for score in fold_scores)})"
-                    if len(fold_scores) > 1
-                    else ""
-                )
+                f" -> avg_log_loss={avg_log_loss:.4f} (folds: {fold_desc})"
             )
         population.sort(key=lambda g: g.fitness, reverse=True)
-        print(f"  best accuracy this gen: {population[0].fitness:.4f}")
+        print(f"  best avg log loss this gen: {-population[0].fitness:.4f}")
         elites = [g.clone() for g in population[:elite_count]]
         offspring: List[Genome] = []
         while len(elites) + len(offspring) < len(population):
@@ -545,7 +552,7 @@ def main() -> None:
         metadata.append(
             {
                 "rank": idx,
-                "val_accuracy": genome.fitness,
+                "val_log_loss": -genome.fitness,
                 "genome": genome.__dict__,
                 "model_path": str(model_path),
                 "submission_path": str(submission_path),
