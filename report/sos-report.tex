@@ -33,9 +33,9 @@
 \usepackage{xcolor}         % colors
 \usepackage{titling}
 \usepackage{graphicx} % Required for images
-\usepackage{graphicx} % Required for images
+\usepackage{subcaption} 
 \usepackage{placeins}
-\usepackage{subfig}
+%\usepackage{subfig}
 \usepackage{natbib} % For better citation handling
 
 % IBM Plex fonts
@@ -98,17 +98,152 @@ In this work we are attempting to resolve and optimize a classical data science 
 
 \section{Introduction}
 
-This is an example citation \citep{smith2020deep}
+A few words about neural network architecture generation using genetic algorithms.
+\\
+\\
+We chose a practical problem to research the domain of neural network generation through genetic algorithms. The problem is actually a Kaggle Challenge, Spaceship Titanic \cite{spaceship-titanic}. A newly launched space liner loaded with 13000 passengers encounters a spacetime anomaly that causes half of the passengers to be transported to an alternate dimension. The challenge is to predict which passengers were transported using records recovered from the spaceship's damaged computer system.
 
 \section{Dataset Analysis}
 
+\paragraph{Training Data}
+
+The training data is distributed in tabular form as a csv file. It consists of 14 features and 8693 rows.
+
+\begin{figure}[h]
+    \centering
+    \includegraphics[width=0.8\textwidth]{csv.png}
+    \caption{Training data view}
+    \label{fig:csv}
+\end{figure}
+\FloatBarrier
+
+The dataset is not perfectly clean, as seen in Figure \ref{fig:missing}, there are around 2\% missing cells per feature.
+
+\begin{figure}[h]
+    \centering
+    \includegraphics[width=0.22\textwidth]{missing.png}
+    \caption{Training data view}
+    \label{fig:missing}
+\end{figure}
+\FloatBarrier
+
+In Figure \ref{fig:features} we can see a summary / statistic of the various features of the training data. We notice the transported feature, the one we need to predict, is pretty balanced (49.63\% vs 50.36\%).
+
+\begin{figure}[h]
+    \centering
+    \begin{subfigure}[t]{0.45\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{categorical.png}
+        \caption{Categorical features summary}
+        \label{fig:categorical}
+    \end{subfigure}
+    \hfill
+    \begin{subfigure}[t]{0.45\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{numerical.png}
+        \caption{Numerical features statistics}
+        \label{fig:numerical}
+    \end{subfigure}
+    \caption{Dataset feature analysis}
+    \label{fig:features}
+\end{figure}
+
+In the correlation matrix of the numerical features we notice strong correlation between Spa, VRDeck and FoodCourt spending and very weak correlations for the Transported feature.
+
+\begin{figure}[h]
+    \centering
+    \includegraphics[width=0.8\textwidth]{correlation.png}
+    \caption{Correlation matrix of numerical features}
+    \label{fig:correlation}
+\end{figure}
+\FloatBarrier
+
+\paragraph{Test Data}
+The test data is presented in the same format, and mirrors the training data except for the Transported feature, which is the one that needs prediction. It features 4277 rows that need prediction. It maintains approximately the same percentage of missing cells (2\%). Also the data distributions are similar with the ones in the training dataset as shown in Figure \ref{fig:test-features}.
+
+\begin{figure}[h]
+    \centering
+    \begin{subfigure}[t]{0.45\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{test-categorical.png}
+        \caption{Categorical features summary}
+        \label{fig:categorical}
+    \end{subfigure}
+    \hfill
+    \begin{subfigure}[t]{0.45\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{test-numerical.png}
+        \caption{Numerical features statistics}
+        \label{fig:numerical}
+    \end{subfigure}
+    \caption{Test dataset feature analysis}
+    \label{fig:test-features}
+\end{figure}
+
+\subsection{Feature Engineering}
+
+We apply a number of transformations to the features, as follows:
+\begin{itemize}
+	\item \textbf{boolean normalization} - CryoSleep and VIP features are transformed from "True"/"False" to 1/0
+	\item \textbf{spend clipping} - each spend column (RoomService, FoodCourt, ShoppingMall, Spa and VRDeck) is trimmed at the 99.5th percentile to eliminate the extreme outliers before aggregation or scaling
+	\item \textbf{cabin decomposition} - the cabin field (Deck/Num/Side) is split into CabinDeck, CabinNum and CabinSide so the models can learn deck-level effects, longitudinal position and port vs starboard differences separately
+	\item \textbf{passenger group features} - parses PassengerId into GroupId, GroupMemberNumber, GroupSize and IsGroupSolo. This exposes group structure (families/friends traveling together), which correlates with survival in the competition narrative
+	\item \textbf{family featuers} - extracts surnames from Name, builds FamilySize, and flags IsFamilySolo. It captures broader kinship beyond the PassengerId grouping and differentiates solo travelers from larger families
+	\item \textbf{spend aggregations} - creates TotalSpend, LogTotalSpend, NonZeroSpendCount, and AllZeroSpend to summarize how much passengers spend on amenities and whether they spend at all—useful because cryosleep travelers usually show zero spend.
+	\item \textbf{per-passenger spend ratios} - adds SpendPerPassenger plus per-amenity usage flags (RoomServiceUsed, etc.) and spend shares (RoomServiceShare, …) so the model knows whether someone spends on specific services and what fraction of their budget each category takes.
+	\item \textbf{cabin location cues} - maps CabinDeck to an ordinal DeckRank, encodes IsPortSide/IsStarboardSide, and buckets CabinNum into CabinZone bins (front/mid/rear/deep) to approximate spatial placement
+	\item \textbf{group age statistics} - Computes each group’s mean/std/range of Age, adds per-passenger residuals (AgeMinusGroupMean), flags large families, and compares family vs group sizes (FamilyShareOfGroup, GroupMinusFamilySize, GroupOutnumbersFamily). These capture heterogeneity within traveling parties.
+	\item \textbf{route feature}	 - concatenates HomePlanet and Destination, keeps the top ROUTE\_TOP\_K combos, and bins others into “Other”. This highlights popular travel routes that correlate with the target.
+	\item \textbf{cryo vs spend mismatch} - Flags passengers whose cryosleep status conflicts with spend totals (e.g., CryoSleep=True but nonzero spend), helping the model exploit data inconsistencies that often correlate with outcomes.
+\end{itemize}
+
+Then we fill in the missing cells, with various strategies based on the column type:
+\begin{itemize}
+	\item \textbf{Age} - If HomePlanet is present, fill missing ages with the median age per planet; remaining gaps fall back to the global median
+      	\item \textbf{CabinNum} - If CabinDeck exists, fill per-deck medians first, then the global median
+      	\item \textbf{Spend columns (RoomService, …)} - If Destination exists, fill per-destination medians, then overall medians
+	\item \textbf{Group/family metrics (GroupId, GroupMemberNumber, GroupSize, FamilySize)} - fill with the column median so engineered ratios remain finite.
+      	\item \textbf{Boolean-like indicators (CryoSleep, VIP, IsGroupSolo, IsFamilySolo, AllZeroSpend)} - fill zeros to treat missing as “false”
+	\item \textbf{String categoricals (CabinDeck, CabinSide, HomePlanet, Destination)} - fill "Unknown" so they still get one-hot encoded
+\end{itemize}
+
+After targeted fills, for numeric columns the remaining NaNs are filled with the column median and for categorical columns they filled with the column mode (most frequent value), defaulting to "Unknown" if a mode cannot be computed. In the last step the numerical columns are scaled using Z-score. This transformations, applied both to training and test data, blow the total number of features to 75, thus creating a much richer dataset.
+
+\begin{figure}[h]
+    \centering
+    \includegraphics[width=1\textwidth]{prepared-correlation.png}
+    \caption{Correlation matrix of prepared features}
+    \label{fig:prepared-correlation}
+\end{figure}
+\FloatBarrier
+
+As seen in Figure \ref{fig:prepared-correlation} there is correlation between transported and CryoSleep and AllZeroSpend.
+
+separator
+\begin{itemize}
+  \item \texttt{scripts/prepare\_data.py}: takes raw \texttt{data/train.csv}/\texttt{data/test.csv}, engineers domain features (group sizes, cabin splits, family stats, spend totals/ratios, route flags, deck/side cues, etc.), imputes missing values with targeted strategies, clips spend outliers, one-hot encodes a fixed set of categoricals (HomePlanet, Destination, CabinDeck, CabinSide, CabinZone, Route), and z-score scales all numeric columns. Outputs \texttt{data/train\_prepared.csv} (label preserved via \texttt{--exclude-columns Transported}) and \texttt{data/test\_prepared.csv}.
+  
+  \item \texttt{scripts/add\_baseline\_predictions.py}: reads the prepared CSVs, fits a Torch logistic regression and a custom gradient-boosted stump model on the training matrix, then appends their predicted probabilities as \texttt{LR\_pred} and \texttt{GB\_pred} columns to both train/test files. This keeps deterministic baseline signals aligned with the engineered features.
+  
+  \item \texttt{scripts/train\_ga\_nn.py}: consumes the prepared matrices, aligns test columns to train order, builds stratified CV folds, and evolves a mixed population of model genomes (MLPs + tree ensembles) using averaged log loss as the fitness metric. Top genomes are retrained on the full dataset, generate submission CSVs under \texttt{submissions/}, and store metadata in \texttt{models/ga\_search\_summary.json}.
+  
+  \item Orchestration via \texttt{run\_all.sh}: automates the entire sequence---downloads the Kaggle competition data, runs both preparation steps, and executes a sample GA training loop---so a fresh workspace can reproduce the processed data and baseline GA run in one command.
+\end{itemize}
+
 \section{Neural Networks Design}
+
+
 
 \section{Genetic Algorithm Design}
 
 \section{Results}
 
 \section{Conclusions and Future Steps}
+
+\appendix
+
+\section{Code Layout}
+
 
 \bibliographystyle{plainnat}  % Choose a bibliography style (plainnat, ieee, etc.)
 \bibliography{references}  % Load the .bib file (without the .bib extension)
