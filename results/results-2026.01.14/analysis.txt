@@ -1,0 +1,8 @@
+- Latest GA runs (results-2026.01.14) with 10-fold CV converged entirely on ExtraTrees/RandomForest genomes; MLPs and boosted stumps never got close to the best log loss (~0.3887), so the top submissions are all similar tree ensembles.
+- Kaggle scores reflect this plateau: the best single models stay around 0.80, and simple averages/meta-blends barely move the needle because the underlying predictions are almost identical.
+- To beat that baseline, we need new model diversity and better probability calibration:
+  * Add HistGradientBoostingClassifier genomes to the population.
+  * Calibrate tree probabilities (e.g., CalibratedClassifierCV) before computing log loss.
+  * Train a stacked meta-learner on out-of-fold predictions + LR_pred/GB_pred.
+  * Ensemble submissions across different run dates to introduce variability.
+  * Seed the GA with heterogeneous elites (not just RF/extratrees) so future runs don’t collapse immediately to one family.
