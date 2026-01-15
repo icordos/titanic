@@ -2,6 +2,7 @@ numpy
 pandas
 torch
 scikit-learn
+joblib
 kaggle
 matplotlib
 seaborn

@@ -28,7 +28,13 @@ from torch import nn
 from torch.utils.data import DataLoader, TensorDataset
 from torch.optim.lr_scheduler import ReduceLROnPlateau, CosineAnnealingLR
 
-from sklearn.ensemble import RandomForestClassifier, ExtraTreesClassifier, GradientBoostingClassifier
+from sklearn.ensemble import (
+    RandomForestClassifier,
+    ExtraTreesClassifier,
+    GradientBoostingClassifier,
+    HistGradientBoostingClassifier,
+)
+from sklearn.calibration import CalibratedClassifierCV
 
 from kaggle_submissions import list_kaggle_submissions
 
@@ -65,6 +71,11 @@ class Genome:
     rf_min_samples_split: int
     rf_sample_ratio: float
     rf_random_thresholds: bool
+    hist_learning_rate: float
+    hist_max_depth: Optional[int]
+    hist_max_leaf_nodes: int
+    hist_min_samples_leaf: int
+    hist_l2_regularization: float
     fitness: float = field(default=-math.inf)
 
     def clone(self) -> "Genome":
@@ -88,6 +99,11 @@ class Genome:
             rf_min_samples_split=self.rf_min_samples_split,
             rf_sample_ratio=self.rf_sample_ratio,
             rf_random_thresholds=self.rf_random_thresholds,
+            hist_learning_rate=self.hist_learning_rate,
+            hist_max_depth=self.hist_max_depth,
+            hist_max_leaf_nodes=self.hist_max_leaf_nodes,
+            hist_min_samples_leaf=self.hist_min_samples_leaf,
+            hist_l2_regularization=self.hist_l2_regularization,
             fitness=self.fitness,
         )
 
@@ -209,41 +225,8 @@ def train_candidate(
 
     # Scikit-learn models
     seed = random.randint(0, 1_000_000)
-    if genome.model_type == "gbstump":
-        clf = GradientBoostingClassifier(
-            n_estimators=genome.gb_estimators,
-            learning_rate=genome.gb_learning_rate,
-            min_samples_leaf=genome.gb_min_leaf,
-            max_depth=1,  # Stumps
-            random_state=seed
-        )
-    elif genome.model_type == "rf":
-        clf = RandomForestClassifier(
-            n_estimators=genome.rf_trees,
-            max_depth=genome.rf_max_depth,
-            max_features=genome.rf_max_features,
-            min_samples_split=genome.rf_min_samples_split,
-            max_samples=genome.rf_sample_ratio,
-            random_state=seed,
-            n_jobs=-1  # Use all cores
-        )
-    elif genome.model_type == "extratrees":
-        clf = ExtraTreesClassifier(
-            n_estimators=genome.rf_trees,
-            max_depth=genome.rf_max_depth,
-            max_features=genome.rf_max_features,
-            min_samples_split=genome.rf_min_samples_split,
-            max_samples=genome.rf_sample_ratio,
-            bootstrap=True, # needed for max_samples usage
-            random_state=seed,
-            n_jobs=-1
-        )
-    else:
-        # Fallback to RF if unknown
-        clf = RandomForestClassifier(n_estimators=100, random_state=seed)
-
-    clf.fit(X_train, y_train)
-    probs = clf.predict_proba(X_val)[:, 1]
+    model = fit_sklearn_model(genome, X_train, y_train, seed=seed, calibration_folds=3)
+    probs = model.predict_proba(X_val)[:, 1]
     return compute_numpy_metrics(y_val, probs)
 
 
@@ -292,6 +275,64 @@ def compute_numpy_metrics(y_true: np.ndarray, probs: np.ndarray) -> Tuple[float,
     return accuracy, log_loss
 
 
+def build_sklearn_estimator(genome: Genome, seed: int):
+    if genome.model_type == "gbstump":
+        return GradientBoostingClassifier(
+            n_estimators=genome.gb_estimators,
+            learning_rate=genome.gb_learning_rate,
+            min_samples_leaf=genome.gb_min_leaf,
+            max_depth=1,
+            random_state=seed,
+        )
+    if genome.model_type == "rf":
+        return RandomForestClassifier(
+            n_estimators=genome.rf_trees,
+            max_depth=genome.rf_max_depth,
+            max_features=genome.rf_max_features,
+            min_samples_split=genome.rf_min_samples_split,
+            max_samples=genome.rf_sample_ratio,
+            random_state=seed,
+            n_jobs=-1,
+        )
+    if genome.model_type == "extratrees":
+        return ExtraTreesClassifier(
+            n_estimators=genome.rf_trees,
+            max_depth=genome.rf_max_depth,
+            max_features=genome.rf_max_features,
+            min_samples_split=genome.rf_min_samples_split,
+            max_samples=genome.rf_sample_ratio,
+            bootstrap=True,
+            random_state=seed,
+            n_jobs=-1,
+        )
+    if genome.model_type == "histgb":
+        return HistGradientBoostingClassifier(
+            learning_rate=genome.hist_learning_rate,
+            max_depth=genome.hist_max_depth,
+            max_leaf_nodes=genome.hist_max_leaf_nodes,
+            min_samples_leaf=genome.hist_min_samples_leaf,
+            l2_regularization=genome.hist_l2_regularization,
+            random_state=seed,
+        )
+    return RandomForestClassifier(n_estimators=100, random_state=seed)
+
+
+def fit_sklearn_model(
+    genome: Genome,
+    X: np.ndarray,
+    y: np.ndarray,
+    seed: int,
+    calibration_folds: int,
+):
+    estimator = build_sklearn_estimator(genome, seed)
+    if genome.model_type in TREE_MODEL_TYPES:
+        model = CalibratedClassifierCV(estimator, method="sigmoid", cv=calibration_folds)
+    else:
+        model = estimator
+    model.fit(X, y)
+    return model
+
+
 # --- Genetic Algorithm ----------------------------------------------------- #
 
 WIDTH_CHOICES = [16, 32, 64, 128, 256, 512]
@@ -300,7 +341,7 @@ EPOCH_CHOICES = [10, 15, 20, 25, 30]
 LEARNING_RATES = [5e-4, 1e-3, 2e-3, 3e-3, 5e-3]
 WEIGHT_DECAY = [0.0, 1e-5, 1e-4, 5e-4]
 DROPOUT = [0.0, 0.1, 0.2, 0.3, 0.4]
-MODEL_TYPES = ["mlp", "gbstump", "rf", "extratrees"]
+MODEL_TYPES = ["mlp", "gbstump", "rf", "extratrees", "histgb"]
 GB_ESTIMATORS = [100, 150, 200, 300]
 GB_LEARNING_RATE = [0.1, 0.2, 0.3]
 GB_MIN_LEAF = [50, 100, 150, 200]
@@ -309,6 +350,12 @@ RF_MAX_DEPTH = [4, 5, 6, 7, 8]
 RF_MAX_FEATURES = [0.5, 0.7, 0.9]
 RF_MIN_SAMPLES_SPLIT = [10, 20, 40]
 RF_SAMPLE_RATIO = [0.6, 0.8, 1.0]
+HIST_LEARNING_RATE = [0.03, 0.05, 0.1]
+HIST_MAX_DEPTH = [3, 4, 5, None]
+HIST_MAX_LEAF_NODES = [31, 63, 127]
+HIST_MIN_SAMPLES_LEAF = [20, 40, 60, 100]
+HIST_L2_REG = [0.0, 0.1, 0.3, 0.6]
+TREE_MODEL_TYPES = {"gbstump", "rf", "extratrees", "histgb"}
 
 
 def random_genome() -> Genome:
@@ -335,6 +382,11 @@ def random_genome() -> Genome:
         rf_min_samples_split=random.choice(RF_MIN_SAMPLES_SPLIT),
         rf_sample_ratio=random.choice(RF_SAMPLE_RATIO),
         rf_random_thresholds=model_type == "extratrees",
+        hist_learning_rate=random.choice(HIST_LEARNING_RATE),
+        hist_max_depth=random.choice(HIST_MAX_DEPTH),
+        hist_max_leaf_nodes=random.choice(HIST_MAX_LEAF_NODES),
+        hist_min_samples_leaf=random.choice(HIST_MIN_SAMPLES_LEAF),
+        hist_l2_regularization=random.choice(HIST_L2_REG),
     )
 
 def mutate(genome: Genome, macro_rate: float) -> Genome:
@@ -363,6 +415,11 @@ def mutate(genome: Genome, macro_rate: float) -> Genome:
     child.rf_min_samples_split = random.choice(RF_MIN_SAMPLES_SPLIT)
     child.rf_sample_ratio = random.choice(RF_SAMPLE_RATIO)
     child.rf_random_thresholds = child.model_type == "extratrees"
+    child.hist_learning_rate = max(0.01, min(0.3, child.hist_learning_rate * random.uniform(0.8, 1.2)))
+    child.hist_max_depth = random.choice(HIST_MAX_DEPTH)
+    child.hist_max_leaf_nodes = random.choice(HIST_MAX_LEAF_NODES)
+    child.hist_min_samples_leaf = random.choice(HIST_MIN_SAMPLES_LEAF)
+    child.hist_l2_regularization = max(0.0, min(1.0, child.hist_l2_regularization + random.uniform(-0.1, 0.1)))
     return child
 
 def evolve(
@@ -536,6 +593,11 @@ def load_genomes_from_summary(path: Path, limit: Optional[int]) -> List[Genome]:
             rf_min_samples_split=int(gdict.get("rf_min_samples_split", entry.get("rf_min_samples_split", 20))),
             rf_sample_ratio=float(gdict.get("rf_sample_ratio", entry.get("rf_sample_ratio", 0.8))),
             rf_random_thresholds=bool(gdict.get("rf_random_thresholds", entry.get("rf_random_thresholds", False))),
+            hist_learning_rate=float(gdict.get("hist_learning_rate", entry.get("hist_learning_rate", 0.05))),
+            hist_max_depth=gdict.get("hist_max_depth", entry.get("hist_max_depth", 5)),
+            hist_max_leaf_nodes=int(gdict.get("hist_max_leaf_nodes", entry.get("hist_max_leaf_nodes", 63))),
+            hist_min_samples_leaf=int(gdict.get("hist_min_samples_leaf", entry.get("hist_min_samples_leaf", 50))),
+            hist_l2_regularization=float(gdict.get("hist_l2_regularization", entry.get("hist_l2_regularization", 0.1))),
             fitness=fitness_value,
         )
         if "val_log_loss" in entry:
@@ -671,41 +733,9 @@ def main() -> None:
             probs = predict_probabilities(model, test_features, device)
             artifact["state_dict"] = model.state_dict()
         else:
-            if genome.model_type == "gbstump":
-                clf = GradientBoostingClassifier(
-                    n_estimators=genome.gb_estimators,
-                    learning_rate=genome.gb_learning_rate,
-                    min_samples_leaf=genome.gb_min_leaf,
-                    max_depth=1,
-                    random_state=seed
-                )
-            elif genome.model_type == "rf":
-                clf = RandomForestClassifier(
-                    n_estimators=genome.rf_trees,
-                    max_depth=genome.rf_max_depth,
-                    max_features=genome.rf_max_features,
-                    min_samples_split=genome.rf_min_samples_split,
-                    max_samples=genome.rf_sample_ratio,
-                    random_state=seed,
-                    n_jobs=-1
-                )
-            elif genome.model_type == "extratrees":
-                clf = ExtraTreesClassifier(
-                    n_estimators=genome.rf_trees,
-                    max_depth=genome.rf_max_depth,
-                    max_features=genome.rf_max_features,
-                    min_samples_split=genome.rf_min_samples_split,
-                    max_samples=genome.rf_sample_ratio,
-                    bootstrap=True,
-                    random_state=seed,
-                    n_jobs=-1
-                )
-            else:
-                 clf = RandomForestClassifier(n_estimators=100, random_state=seed)
-
-            clf.fit(X, y)
-            probs = clf.predict_proba(test_features)[:, 1]
-            artifact["model"] = clf # Pickle the sklearn model directly
+            tree_model = fit_sklearn_model(genome, X, y, seed=seed, calibration_folds=5)
+            probs = tree_model.predict_proba(test_features)[:, 1]
+            artifact["model"] = tree_model  # Pickle the sklearn model directly
 
         timestamp = int(time.time())
         model_path = Path("models") / f"ga_nn_{idx}_{timestamp}.pt"
