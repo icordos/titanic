@@ -19,12 +19,14 @@ import numpy as np
 import pandas as pd
 
 SPEND_COLUMNS = ["RoomService", "FoodCourt", "ShoppingMall", "Spa", "VRDeck"]
+WEAK_SPEND_SHARE_COLUMNS = [f"{col}Share" for col in SPEND_COLUMNS]
 ONE_HOT_CATEGORICALS = ("HomePlanet", "Destination", "CabinDeck", "CabinSide", "CabinZone", "Route")
 HIGH_CARDINALITY_DROP = {"Cabin"}
 ROUTE_TOP_K = 5
 DECK_ORDER = {"A": 0, "B": 1, "C": 2, "D": 3, "E": 4, "F": 5, "G": 6, "T": 7}
 CABIN_ZONE_BINS = (-np.inf, 300, 600, 900, np.inf)
 CABIN_ZONE_LABELS = ("front", "mid", "rear", "deep")
+MAX_DECK_INDEX = max(DECK_ORDER.values())
 
 
 def clip_spend_inputs(df: pd.DataFrame, quantile: float = 0.995) -> None:
@@ -121,6 +123,31 @@ def add_cabin_location_features(df: pd.DataFrame) -> None:
         df["IsStarboardSide"] = (df["CabinSide"] == "S").astype(float)
     if "CabinNum" in df.columns:
         df["CabinZone"] = pd.cut(df["CabinNum"], bins=CABIN_ZONE_BINS, labels=CABIN_ZONE_LABELS)
+
+
+def add_cabin_embeddings(df: pd.DataFrame) -> None:
+    """Project cabin metadata into smooth embeddings to capture relative positions."""
+    if "CabinDeck" in df.columns:
+        deck_rank = df["CabinDeck"].map(DECK_ORDER).astype(float)
+        norm = deck_rank.fillna(-1.0) / max(1, MAX_DECK_INDEX)
+        df["CabinDeckEmbedSin"] = np.sin(np.pi * norm)
+        df["CabinDeckEmbedCos"] = np.cos(np.pi * norm)
+    if "CabinNum" in df.columns:
+        cabin_num = df["CabinNum"].astype(float)
+        num_min = cabin_num.min(skipna=True)
+        num_max = cabin_num.max(skipna=True)
+        span = (num_max - num_min) if (num_max is not None and num_min is not None) else None
+        if span and span > 0:
+            norm = (cabin_num - num_min) / span
+        else:
+            norm = cabin_num.fillna(0.0)
+        norm = norm.fillna(0.0).clip(0.0, 1.0)
+        df["CabinNumEmbedSin"] = np.sin(2 * np.pi * norm)
+        df["CabinNumEmbedCos"] = np.cos(2 * np.pi * norm)
+    if "CabinDeck" in df.columns and "CabinSide" in df.columns:
+        deck_rank = df["CabinDeck"].map(DECK_ORDER).astype(float).fillna(-1.0)
+        side = df["CabinSide"].map({"P": -1.0, "S": 1.0}).fillna(0.0)
+        df["CabinDeckSideInteraction"] = deck_rank * side
 
 
 def add_group_age_features(df: pd.DataFrame) -> None:
@@ -266,9 +293,11 @@ def main() -> None:
     impute_targeted(features_df)
     add_spend_usage_features(features_df)
     add_cabin_location_features(features_df)
+    add_cabin_embeddings(features_df)
     add_group_age_features(features_df)
     add_route_feature(features_df)
     add_cryo_spend_mismatch(features_df)
+    features_df = features_df.drop(columns=[col for col in WEAK_SPEND_SHARE_COLUMNS if col in features_df.columns])
 
     numeric_cols = features_df.select_dtypes(include=[np.number]).columns
     categorical_cols = [col for col in features_df.columns if col not in numeric_cols]
