@@ -180,7 +180,7 @@ The test data is presented in the same format, and mirrors the training data exc
     \label{fig:test-features}
 \end{figure}
 
-\subsection{Feature Engineering}
+\section{Feature Engineering}
 
 We apply a number of transformations to the features, as follows:
 \begin{itemize}
@@ -218,23 +218,23 @@ After targeted fills, for numeric columns the remaining NaNs are filled with the
 \FloatBarrier
 
 As seen in Figure \ref{fig:prepared-correlation} there is correlation between transported and CryoSleep and AllZeroSpend.
-
-separator
-\begin{itemize}
-  \item \texttt{scripts/prepare\_data.py}: takes raw \texttt{data/train.csv}/\texttt{data/test.csv}, engineers domain features (group sizes, cabin splits, family stats, spend totals/ratios, route flags, deck/side cues, etc.), imputes missing values with targeted strategies, clips spend outliers, one-hot encodes a fixed set of categoricals (HomePlanet, Destination, CabinDeck, CabinSide, CabinZone, Route), and z-score scales all numeric columns. Outputs \texttt{data/train\_prepared.csv} (label preserved via \texttt{--exclude-columns Transported}) and \texttt{data/test\_prepared.csv}.
-  
-  \item \texttt{scripts/add\_baseline\_predictions.py}: reads the prepared CSVs, fits a Torch logistic regression and a custom gradient-boosted stump model on the training matrix, then appends their predicted probabilities as \texttt{LR\_pred} and \texttt{GB\_pred} columns to both train/test files. This keeps deterministic baseline signals aligned with the engineered features.
-  
-  \item \texttt{scripts/train\_ga\_nn.py}: consumes the prepared matrices, aligns test columns to train order, builds stratified CV folds, and evolves a mixed population of model genomes (MLPs + tree ensembles) using averaged log loss as the fitness metric. Top genomes are retrained on the full dataset, generate submission CSVs under \texttt{submissions/}, and store metadata in \texttt{models/ga\_search\_summary.json}.
-  
-  \item Orchestration via \texttt{run\_all.sh}: automates the entire sequence---downloads the Kaggle competition data, runs both preparation steps, and executes a sample GA training loop---so a fresh workspace can reproduce the processed data and baseline GA run in one command.
-\end{itemize}
-
-\section{Neural Networks Design}
-
-
+\\
+\\
+Finally, the last step in data augumentation is to add 2 predictions, one based on logistic regression and the other based on a gradient-boosted stump model. They capture different decision boundaries than the genetic algorithm might find, and their outputs are often well-calibrated. By appending them as features, we let the genetic algorithm models learn from these baseline predictions (e.g., blending them, focusing on where they disagree) without having to run the baselines separately later.
 
 \section{Genetic Algorithm Design}
+
+For population initialization each genome samples a model type (MLP, gradient-boosted stumps, random forest, ExtraTrees) along with its hyperparameters. We can also seed genomes from past runs.
+\\
+We build either a single holdout or K stratified folds and reuse these splits for all genomes to keep fitness comparisons consistent.
+\\
+During each generation, we train every genome on each cross-validation fold, record fold accuracies and log losses, and compute the average log loss $\\ell_g$. The fitness is defined as $f_g = -\\ell_g$ so lower loss means higher fitness; we also log the per-fold metrics for transparency.
+\\
+We sort genomes by fitness, keep the top elites unchanged, and refill the population with mutated copies. Macro mutations can switch model families or re-sample architectures, while micro mutations tweak hyperparameters.
+ \\
+We iterate for T generations: repeat the evaluate → select → mutate loop for the configured number of generations.
+\\
+We retrain the best k genomes on the full training set (MLPs via PyTorch, tree models via their custom classes), generate test predictions, and save both the model weights and submission CSVs. Metadata (including $\\ell_g$) is for future restarts or ensembles.
 
 \section{Results}
 
