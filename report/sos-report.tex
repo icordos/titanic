@@ -56,33 +56,14 @@
 % authors names on the first line, and the last on the second line, try using
 % \AND instead of \And before the third author name.
 
-
 \author{%
-  Cristian Cordoș\\
-  National University of Science and Technology POLITEHNICA Bucharest, Romania\\
-  \texttt{ioan.cordos@stud.acs.upb.ro}\\
-   \\
-  % examples of more authors
-  % \And
-  % Coauthor \\
-  % Affiliation \\
-  % Address \\
-  % \texttt{email} \\
-  % \AND
-  % Coauthor \\
-  % Affiliation \\
-  % Address \\
-  % \texttt{email} \\
-  % \And
-  % Coauthor \\
-  % Affiliation \\
-  % Address \\
-  % \texttt{email} \\
-  % \And
-  % Coauthor \\
-  % Affiliation \\
-  % Address \\
-  % \texttt{email} \\
+  \makebox[\textwidth][c]{%
+    \begin{tabular}{c}
+      Cristian Cordoș\\
+      National University of Science and Technology POLITEHNICA Bucharest, Romania\\
+      \texttt{ioan.cordos@stud.acs.upb.ro}
+    \end{tabular}
+  }
 }
 
 
@@ -93,16 +74,43 @@
 
 
 \begin{abstract}
-In this work we are attempting to resolve and optimize a classical data science problem involving numerical data using deep neural networks automatically fine tuned by genetic algorithms.
+In this work we automatically fine tune deep neural networks using genetic algorithms and ensemble models for the Kaggle Spaceship Titanic competition.
+\\
+We explore five model families (MLP, Gradient-Boosted Stumps, Random Forest, ExtraTrees, HistGradientBoosting) through evolutionary search, achieving a final Kaggle score of 0.80640.
 \end{abstract}
 
 
 \section{Introduction}
 
-A few words about neural network architecture generation using genetic algorithms.
+The automated design of neural network architectures remains a fundamental challenge in machine learning. While deep learning has achieved remarkable success across diverse domains, the performance of these models critically depends on architectural choices and hyperparameter configurations that are typically determined through expensive manual tuning or expert intuition. This dependency creates a significant barrier to applying deep learning effectively, particularly for practitioners working with domain-specific tabular datasets where optimal architectures are not well-established.
 \\
-\\
-We chose a practical problem to research the domain of neural network generation through genetic algorithms. The problem is actually a Kaggle Challenge, Spaceship Titanic \cite{spaceship-titanic}. A newly launched space liner loaded with 13000 passengers encounters a spacetime anomaly that causes half of the passengers to be transported to an alternate dimension. The challenge is to predict which passengers were transported using records recovered from the spaceship's damaged computer system.
+We chose a practical problem to research the domain of neural network generation through genetic algorithms. The problem is a Kaggle Challenge, Spaceship Titanic \cite{spaceship-titanic}. A newly launched space liner loaded with 13000 passengers encounters a spacetime anomaly that causes half of the passengers to be transported to an alternate dimension. The challenge is to predict which passengers were transported using records recovered from the spaceship's damaged computer system.
+
+\section{State of the Art}
+
+Neural Architecture Search (NAS) automates the design of neural network architectures, traditionally requiring expert knowledge and extensive manual tuning. While NAS has achieved remarkable success in computer vision~\citep{zoph2016neural} and NLP, its application to tabular data remains underexplored despite tabular datasets dominating real-world ML applications in healthcare, finance, and industry.
+
+\subsection{Classical NAS Approaches}
+
+\textbf{Reinforcement Learning-based NAS}~\citep{zoph2016neural,pham2018efficient}: Uses RL agents to generate architectures sequentially. NASNet achieved state-of-the-art ImageNet accuracy but required 2000 GPU-days. ENAS~\cite{pham2018efficient} reduced this to 1 GPU-day via parameter sharing.
+
+\textbf{Evolutionary Methods}~\cite{real2019regularized}: Genetic algorithms evolve populations of architectures. AmoebaNet~\cite{real2019regularized} used tournament selection with 3150 GPU-days. More efficient variants like NSGA-Net employ multi-objective optimization trading accuracy vs. complexity.
+
+\textbf{Gradient-based NAS}~\cite{liu2018darts}: DARTS formulates architecture search as continuous optimization over relaxed architecture spaces. Reduces search to 4 GPU-days but suffers from discretization gaps and instability.
+
+\textbf{Bayesian Optimization}: Uses Gaussian processes or tree-structured Parzen estimators to model architecture performance. BOHB combines BO with Hyperband for efficient search.
+
+\subsection{Tabular-Specific Challenges}
+
+Unlike vision/NLP, tabular data presents unique challenges:
+\begin{itemize}
+    \item \textbf{Heterogeneous features}: Mixed categorical, numerical, and ordinal types
+    \item \textbf{Irregular patterns}: No spatial/sequential structure to exploit
+    \item \textbf{Tree-based dominance}: XGBoost/LightGBM often outperform NNs
+    \item \textbf{Small-medium scale}: Datasets typically $10^{2}$--$10^{6}$ samples vs. millions in vision
+    \item \textbf{Feature engineering}: Critical preprocessing requires domain knowledge
+\end{itemize}
+
 
 \section{Dataset Analysis}
 
@@ -449,7 +457,38 @@ The figure below shows how the Kaggle score evolves across the 4 GA runs.
 \end{figure}
 \FloatBarrier
 
-\section{Conclusions and Future Steps}
+\section{Discussion}
+
+Examining the progression across our four experimental cycles reveals interesting patterns. The validation log loss remained remarkably stable (ranging only from 0.3878 to 0.3907), yet Kaggle test scores improved from 0.80079 to 0.80640. This apparent discrepancy suggests two phenomena: (1) our cross-validation strategy effectively prevented overfitting, maintaining consistent validation performance, and (2) improvements in test performance came primarily from better generalization rather than simply fitting the training data more tightly.
+\\
+The genetic algorithm showed clear preferences for certain model families. ExtraTrees and MLPs dominated the top-performing genomes, appearing in 18 of the 23 documented high-fitness solutions. Gradient-Boosted Stumps showed competitive validation metrics but generally weaker test performance, suggesting potential overfitting despite calibration. HistGradientBoosting, introduced in the third experimental cycle, failed to surpass existing solutions, indicating the initial model family selection was already near-optimal for this task.
+\\
+The best-performing MLP architecture (6 layers: [64, 32, 16, 32, 256, 16]) defies conventional wisdom that deeper or wider networks are necessarily better. The asymmetric widths and the narrow bottleneck at layer 3 (width 16) suggest the network learned to compress information before expanding it again—a pattern reminiscent of autoencoder architectures. This emergent structure was not explicitly designed but discovered through evolutionary search, highlighting the value of exploration over imposed architectural priors.
+\\
+Tree-based models converged toward moderate ensemble sizes (100-300 estimators) rather than maximizing tree count, with lower learning rates (0.004-0.005) providing better regularization than aggressive boosting. The preference for ExtraTrees over standard Random Forests suggests the additional randomness in split selection improved generalization on this particular dataset.
+\\
+The iterative refinement of features had substantial impact. The addition of sine/cosine embeddings for spatial cabin features (Day 3) produced a 0.0013 improvement in Kaggle score—modest but consistent across multiple model architectures. Conversely, removing weak spend-share ratios paradoxically improved performance by reducing noise in the feature space, demonstrating that feature engineering is as much about judicious removal as creative addition.
+\\
+The engineered group and family features proved particularly valuable, with GroupSize, FamilySize, and the various mismatch flags (CryoSpendMismatch) appearing as high-importance features in tree-based models. This validates our hypothesis that the competition's narrative (families traveling together with correlated fates) should be explicitly encoded rather than left for models to discover from raw PassengerId strings.
+
+\section{Conclusions}
+This work demonstrates that genetic algorithms provide a viable framework for automated architecture search in tabular data classification tasks. By encoding five distinct model families within a unified genome representation and employing evolutionary operators to explore the joint space of model type, architecture, and hyperparameters, we achieved competitive performance (80.64\% accuracy) on the Kaggle Spaceship Titanic benchmark.
+\\
+Our iterative methodology, alternating between GA-driven architecture search and human-guided feature engineering, proved effective in progressively improving model performance. The final system combines the complementary strengths of neural networks (learning complex non-linear interactions) and tree-based ensembles (capturing heterogeneous feature importance and robust handling of mixed data types).
+\\
+The detailed analysis of evolved architectures reveals that the genetic algorithm discovered non-obvious solutions—such as asymmetric bottleneck MLPs and moderate-sized ExtraTrees ensembles—that may not have been prioritized in manual architecture design. This validates the exploration capability of evolutionary methods beyond mere hyperparameter tuning.
+
+\subsection{Limitations}
+
+Several limitations of this work warrant acknowledgment:
+
+\noindent\textbf{1. Single-dataset evaluation}: Our experiments focus exclusively on one Kaggle competition. Generalization to other tabular datasets, particularly those with different characteristics (extreme class imbalance, high-dimensional sparse features, temporal dependencies), remains unvalidated. The architectural preferences discovered here may be task-specific.
+
+\noindent\textbf{2. Absence of baseline comparisons}: We do not compare against alternative automated machine learning approaches (Bayesian optimization, random search, AutoML frameworks like Auto-sklearn or FLAML) or manual expert tuning. Consequently, we cannot definitively claim that genetic algorithms are superior—only that they are sufficient to achieve competitive results.
+
+\noindent\textbf{3. Public leaderboard feedback}: Our iterative refinement process used Kaggle public leaderboard scores to guide feature engineering decisions. This introduces potential overfitting to the public test set and may overestimate true generalization performance. A more rigorous approach would use only cross-validation metrics for all decisions.
+
+\noindent\textbf{4. Limited theoretical insight}: While we demonstrate empirical success, we provide little theoretical understanding of \emph{why} genetic algorithms work well for this problem or \emph{when} they should be preferred over alternatives. The work remains primarily empirical engineering.
 
 \appendix
 
