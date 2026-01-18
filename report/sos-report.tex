@@ -28,6 +28,7 @@
 \usepackage{url}            % simple URL typesetting
 \usepackage{booktabs}       % professional-quality tables
 \usepackage{amsfonts}       % blackboard math symbols
+\usepackage{amsmath}        % math environments
 \usepackage{nicefrac}       % compact symbols for 1/2, etc.
 \usepackage{microtype}      % microtypography
 \usepackage{xcolor}         % colors
@@ -224,25 +225,242 @@ Finally, the last step in data augumentation is to add 2 predictions, one based 
 
 \section{Genetic Algorithm Design}
 
-For population initialization each genome samples a model type (MLP, gradient-boosted stumps, random forest, ExtraTrees) along with its hyperparameters. We can also seed genomes from past runs.
-\\
-We build either a single holdout or K stratified folds and reuse these splits for all genomes to keep fitness comparisons consistent.
-\\
-During each generation, we train every genome on each cross-validation fold, record fold accuracies and log losses, and compute the average log loss $\\ell_g$. The fitness is defined as $f_g = -\\ell_g$ so lower loss means higher fitness; we also log the per-fold metrics for transparency.
-\\
-We sort genomes by fitness, keep the top elites unchanged, and refill the population with mutated copies. Macro mutations can switch model families or re-sample architectures, while micro mutations tweak hyperparameters.
- \\
-We iterate for T generations: repeat the evaluate → select → mutate loop for the configured number of generations.
-\\
-We retrain the best k genomes on the full training set (MLPs via PyTorch, tree models via their custom classes), generate test predictions, and save both the model weights and submission CSVs. Metadata (including $\\ell_g$) is for future restarts or ensembles.
+Our GA explores five genome families, each with its own hyperparameter set:
+
+\begin{enumerate}
+    \item \textbf{Multi Layer Perceptron} (\texttt{model\_type="mlp"})
+    \begin{itemize}
+        \item \textit{Architecture genes:} number of layers (1--6), per-layer widths drawn from [16, 32, 64, 128, 256, 512], activation (relu, gelu, leaky\_relu), dropout rate, batch size, epoch count.
+        \item \textit{Optimization genes:} optimizer (adam/adamw), learning rate ($5 \times 10^{-4}$ to $5 \times 10^{-3}$), weight decay (0 to $10^{-3}$).
+        \item \textit{Training:} PyTorch sequential net with BatchNorm + optional Dropout per layer, BCEWithLogitsLoss, ReduceLROnPlateau scheduler, predictions via sigmoid.
+    \end{itemize}
+    
+    \item \textbf{Gradient-Boosted Stumps (\citep{friedman2001gradientboosting})} (\texttt{model\_type="gbstump"})
+    \begin{itemize}
+        \item \textit{Genes:} number of estimators (100--300), learning rate (0.1--0.3), min leaf size (50--200).
+        \item \textit{Implementation:} scikit-learn GradientBoostingClassifier forced to depth-1 trees (decision stumps). Outputs are calibrated via CalibratedClassifierCV (3-fold sigmoid) for reliable probabilities.
+    \end{itemize}
+    
+    \item \textbf{Random Forest (\citep{breiman2001randomforest})} (\texttt{model\_type="rf"})
+    \begin{itemize}
+        \item \textit{Genes:} tree count (100--400), max depth (4--8), max features (0.5--0.9 fraction), min samples split (10--40), max\_samples (0.6--1.0).
+        \item \textit{Implementation:} scikit-learn RandomForestClassifier with \texttt{n\_jobs=-1}. Predictions are likewise passed through CalibratedClassifierCV to smooth probabilities.
+    \end{itemize}
+    
+    \item \textbf{ExtraTrees(\citep{geurts2006extratrees}) } (\texttt{model\_type="extratrees"})
+    \begin{itemize}
+        \item Shares the RF hyperparameters (tree count, depth, max\_features, min\_samples\_split, max\_samples), plus a \texttt{rf\_random\_thresholds} flag set true for this family.
+        \item \textit{Implementation:} scikit-learn ExtraTreesClassifier (with bootstrap enabled when max\_samples $< 1.0$) and calibration wrapper.
+    \end{itemize}
+    
+    \item \textbf{HistGradientBoosting (\citep{ke2017lightgbm})} (\texttt{model\_type="histgb"})
+    \begin{itemize}
+        \item \textit{Genes:} learning rate (0.03--0.1), max depth (3--5 or None), max leaf nodes (31/63/127), min samples leaf (20--100), L2 regularization (0.0--0.6).
+        \item \textit{Implementation:} scikit-learn HistGradientBoostingClassifier, also wrapped in CalibratedClassifierCV.
+    \end{itemize}
+\end{enumerate}
+
+Each genome type contributes different inductive biases: MLPs model high-order interactions, GBDT variants capture step-wise splits, RF/ExtraTrees add bagged diversity, and HistGB offers strong tabular performance with histogram-based splits.
+
+Fitness evaluation uses either a single holdout split or stratified $k$-fold cross-validation ($k \in \{5,8\}$ in the experiments). For each genome $g$ we train on every fold, compute log loss $\ell_{g,i}$ and accuracy $a_{g,i}$, and define fitness as $f_g = -\tfrac{1}{k} \sum_i \ell_{g,i}$ so lower loss yields higher fitness. Tree models are wrapped in \texttt{CalibratedClassifierCV} to ensure well-calibrated probabilities before ensembling; MLPs are trained with BCEWithLogitsLoss, Adam/AdamW optimizers, batch normalization, dropout, and ReduceLROnPlateau schedulers. All fold metrics are logged to the console for transparency and later analysis.
+
+Selection keeps the top $E$ elites every generation and refills the population with mutated descendants. ``Macro'' mutations can switch model families or redraw an entire architecture (e.g., number of layers), while ``micro'' mutations perturb continuous hyperparameters (learning rate, dropout, weight decay) or resample discrete values (trees, depth, min samples split). The evaluate $\rightarrow$ select $\rightarrow$ mutate loop repeats for $T$ generations, steadily improving the population's fitness while preserving diversity.
+
+After evolution, the best $k$ genomes are retrained on the full training set. PyTorch MLPs are serialized via \texttt{state\_dict}, and scikit-learn models are stored directly. Each retrained model produces a Kaggle submission CSV along with metadata describing its validation log loss, fold metrics, submission path, and (when applicable) Kaggle score. These summaries drive subsequent stacking pipelines and allow future GA runs to restart from the strongest known configurations.
 
 \section{Results}
+
+The experimental run that produced the top scoring submission started with a long genetic algorithm sweep of population 15 across 40 generations, each genome being trained with the dataset split over 5 k-folds.
+
+\begin{table}[h]
+\centering
+\label{tab:ga_results}
+\begin{tabular}{|c|l|c|p{6cm}|c|}
+\hline
+\textbf{Rank} & \textbf{Model Type} & \textbf{Val Log Loss} & \textbf{Architecture Description} & \textbf{Kaggle Score} \\
+\hline
+1 & ExtraTrees & 0.3887 & 3 layers [512, 64, 128], 300 GB estimators, 0.005 LR & 0.80079 \\
+\hline
+2 & GB Stump & 0.3887 & 4 layers [256, 32, 16, 256], 100 GB estimators, 0.005 LR & 0.79565 \\
+\hline
+3 & ExtraTrees & 0.3887 & 3 layers [512, 512, 128], 150 GB estimators, 0.004 LR & 0.79752 \\
+\hline
+4 & ExtraTrees & 0.3887 & 3 layers [32, 64, 128], 300 GB estimators, 0.0045 LR & 0.79775 \\
+\hline
+5 & GB Stump & 0.3887 & 1 layer [16], 150 GB estimators, 0.005 LR & 0.79494 \\
+\hline
+6 & ExtraTrees & 0.3887 & 3 layers [128, 64, 128], 300 GB estimators, 0.005 LR & --- \\
+\hline
+7 & ExtraTrees & 0.3889 & 3 layers [32, 16, 128], 150 GB estimators, 0.005 LR & --- \\
+\hline
+8 & ExtraTrees & 0.3889 & 3 layers [32, 16, 64], 300 GB estimators, 0.004 LR & --- \\
+\hline
+9 & ExtraTrees & 0.3889 & 3 layers [16, 16, 128], 100 GB estimators, 0.0048 LR & --- \\
+\hline
+10 & Random Forest & 0.3889 & 3 layers [128, 64, 512], 200 RF trees, 0.005 LR & --- \\
+\hline
+\end{tabular}
+\caption{Genetic Algorithm Hyperparameter Search Results}
+\end{table}
+\FloatBarrier
+
+Then we pulled the best entries from the above run, generated out‑of‑fold predictions for those models and combined them with the two deterministic features (LR\_pred, GB\_pred) already baked into the training dataset. A logistic regression meta‑model (with standardization) was trained on the stacked OOF matrix and produced a new submission that scored 0.80149.
+\\
+After this we extended the genetic algorithm to include HistGradientBoosting genomes, we selected the previous top 10 models as seed, and we ran across 15 generations with a population of 15, each model trained over 8-folds.
+
+\begin{table}[h]
+\centering
+\label{tab:ga_results_new}
+\begin{tabular}{|c|l|c|p{6cm}|c|}
+\hline
+\textbf{Rank} & \textbf{Model Type} & \textbf{Val Log Loss} & \textbf{Architecture Description} & \textbf{Kaggle Score} \\
+\hline
+1 & ExtraTrees & 0.4002 & 3 layers [32, 16, 32], 300 GB estimators, 0.005 LR & 0.80079 \\
+\hline
+2 & ExtraTrees & 0.4002 & 3 layers [128, 16, 32], 300 GB estimators, 0.005 LR & 0.79845 \\
+\hline
+3 & ExtraTrees & 0.4002 & 3 layers [32, 64, 32], 150 GB estimators, 0.0045 LR & 0.79869 \\
+\hline
+\end{tabular}
+\caption{Genetic Algorithm Hyperparameter Search Results}
+\end{table}
+\FloatBarrier
+
+Individual submissions clustered around 0.799 and the best genome and stacker blend reached 0.80266.
+\\
+For the next step we returned to feature engineering and added:
+\begin{itemize}
+	\item CabinDeckEmbedSin \ CabinDeckEmbedCos – sine/cosine projections of the deck rank (A–T normalized) so the model sees relative deck position without treating the ordinal index as linear.
+      	\item CabinNumEmbedSin / CabinNumEmbedCos – normalized cabin-number projections (sin/cos over the longitudinal position) to capture spatial cycles down the ship.
+      	\item CabinDeckSideInteraction – deck rank multiplied by a side indicator (port vs starboard) so asymmetries across the hull can be learned.
+	\item Spend-share cleanup: After computing per-service usage flags and shares, we dropped the weak RoomServiceShare/FoodCourtShare/… columns entirely, keeping only the stronger aggregates (TotalSpend, SpendPerPassenger, per-service usage booleans). This removed noisy ratios that weren’t helping the GA while preserving the informative spend signals.
+\end{itemize}
+
+  
+\begin{table}[h]
+\centering
+\label{tab:ga_results_mlp}
+\begin{tabular}{|c|l|c|p{6cm}|c|}
+\hline
+\textbf{Rank} & \textbf{Model Type} & \textbf{Val Log Loss} & \textbf{Architecture Description} & \textbf{Kaggle Score} \\
+\hline
+1 & MLP & 0.3907 & 1 layer [32], 300 GB estimators, 0.0046 LR & 0.80430 \\
+\hline
+2 & MLP & 0.3907 & 1 layer [128], 200 GB estimators, 0.0041 LR & --- \\
+\hline
+\end{tabular}
+\caption{Genetic Algorithm Hyperparameter Search Results}
+\end{table}
+\FloatBarrier
+
+Those changes, along with rerunning the pipeline for 10 generations with a population of 12 using 5-folds, gave a richer cabin representation and a cleaner spend feature set, enabling the Day 3 GA run to reach 0.8043.
+\\
+In the final step we use the top 15 models from previous experiments and we orchestrate a longer GA search of 20 generations with a population of 18 over 8-folds.
+
+\begin{table}[h]
+\centering
+\label{tab:ga_results_day5}
+\begin{tabular}{|c|l|c|p{6cm}|c|}
+\hline
+\textbf{Rank} & \textbf{Model Type} & \textbf{Val Log Loss} & \textbf{Architecture Description} & \textbf{Kaggle Score} \\
+\hline
+1 & MLP & 0.3878 & 6 layers [64, 32, 16, 32, 256, 16], 100 GB estimators, 0.0046 LR & 0.80640 \\
+\hline
+2 & Random Forest & 0.3878 & 4 layers [128, 16, 256, 16], 100 GB estimators, 0.005 LR & --- \\
+\hline
+3 & MLP & 0.3878 & 6 layers [64, 32, 16, 128, 256, 16], 200 GB estimators, 0.005 LR & --- \\
+\hline
+4 & MLP & 0.3878 & 6 layers [64, 32, 16, 32, 256, 16], 150 GB estimators, 0.005 LR & --- \\
+\hline
+5 & MLP & 0.3878 & 6 layers [64, 32, 16, 32, 256, 512], 200 GB estimators, 0.0048 LR & --- \\
+\hline
+\end{tabular}
+\caption{Genetic Algorithm Hyperparameter Search Results}
+\end{table}
+\FloatBarrier
+
+\subsection{Best Submission - Complete Parameter Specification}
+
+The best Kaggle score is \textbf{0.80640}. The complete parameter specification is as follows:
+
+\subsubsection{Model Overview}
+
+The top-performing model is a \textbf{multi-layer perceptron (MLP)} ensemble that achieved a validation log loss of 0.3878 and a Kaggle public score of 0.80640.
+
+\subsubsection{Neural Network Architecture}
+
+\begin{itemize}
+    \item Model type: MLP
+    \item Number of layers: 6
+    \item Layer widths: [64, 32, 16, 32, 256, 16]
+    \item Activation function: Leaky ReLU
+    \item Dropout rate: 0.2254 (22.54\%)
+\end{itemize}
+
+\subsubsection{Training Configuration}
+
+\begin{itemize}
+    \item Optimizer: Adam
+    \item Learning rate: 0.004603
+    \item Weight decay: 0.0 (no L2 regularization on neural network)
+    \item Batch size: 256
+    \item Training epochs: 20
+\end{itemize}
+
+\subsubsection{Gradient Boosting Parameters}
+
+\begin{itemize}
+    \item Number of estimators: 100
+    \item Learning rate: 0.1
+    \item Minimum samples per leaf: 100
+\end{itemize}
+
+\subsubsection{Random Forest Parameters}
+
+\begin{itemize}
+    \item Number of trees: 400
+    \item Maximum tree depth: 8
+    \item Maximum features per split: 0.5 (50\%)
+    \item Minimum samples for split: 20
+    \item Sample ratio: 0.6 (60\% bootstrap sampling)
+    \item Random thresholds: False
+\end{itemize}
+
+\subsubsection{Histogram-based Gradient Boosting Parameters}
+
+\begin{itemize}
+    \item Learning rate: 0.0341
+    \item Maximum depth: 5
+    \item Maximum leaf nodes: 31
+    \item Minimum samples per leaf: 20
+    \item L2 regularization: 0.0
+\end{itemize}
+
+In summary, this model represents the convergence of the genetic algorithm search after multiple iterations, with the 6-layer MLP architecture proving most effective when combined with moderate ensemble sizes and carefully tuned regularization through dropout.
+
+The figure below shows how the Kaggle score evolves across the 4 GA runs.
+
+
+\begin{figure}[h]
+    \centering
+    \includegraphics[width=0.8\textwidth]{score-evolution.png}
+    \caption{Kaggle score evolution across GA generations}
+    \label{fig:csv}
+\end{figure}
+\FloatBarrier
 
 \section{Conclusions and Future Steps}
 
 \appendix
 
 \section{Code Layout}
+
+The code is publicly available on \href{https://github.com/icordos/titanic}{github}.
+The main scripts are:
+\begin{itemize}
+	\item prepare\_data.py - downloads the training and test data from Kaggle and prepares it
+	\item train\_ga\_nn.py - the actual genetic algorithm implementation, run the full ga loop based on training data and produces Kaggle submission files based on test data
+\end{itemize}
 
 
 \bibliographystyle{plainnat}  % Choose a bibliography style (plainnat, ieee, etc.)

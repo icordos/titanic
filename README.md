@@ -13,8 +13,8 @@ python scripts/prepare_data.py \
   --exclude-columns Transported
 ```
 - Non-numeric columns are one-hot encoded.
-- Missing values are imputed with column means.
-- Every feature is min-max scaled to [0, 1].
+- Missing values are imputed via column-aware rules (planet/deck medians for Age/CabinNum, destination medians for spend columns, medians or zeros elsewhere).
+- Numeric features are z-score scaled; categorical one-hots stay in \{0,1\}.
 The script drops `PassengerId` and `Name` by default; override via `--drop-columns` if you need to remove other identifiers. Add `--exclude-columns` entries to keep labels or other fields untouched in the output. Run it once for `data/train.csv` (keeping `Transported`) and again for `data/test.csv` (omit `--exclude-columns`).
 
 ## Genetic Algorithm Neural Network Trainer
@@ -27,7 +27,8 @@ python scripts/train_ga_nn.py \
   --generations 4 --population 8 --top-k 2
 ```
 - Search space mirrors the specs deck: 1–6 dense layers (16–512 width), ReLU/GELU/LeakyReLU activations, dropout, Adam/AdamW with tunable LR, weight decay, batch size, and epoch caps.
-- Each generation evaluates the population on an 80/20 validation split, keeps elites, and mutates new candidates (macro and micro changes).
+- Model types now include PyTorch MLPs plus calibrated scikit-learn ensembles (gradient-boosted stumps, RandomForest, ExtraTrees, HistGradientBoosting). Cavern embeddings, spend aggregates, and LR/GB baseline columns are all consumed automatically through the prepared CSVs.
+- Each generation evaluates the population on either an 80/20 holdout or stratified `--cv-folds` split (up to 8 folds), keeps elites, and mutates new candidates (macro/micro changes).
 - The top `--top-k` genomes retrain on the full dataset, generate Kaggle submissions under `submissions/`, save PyTorch weights under `models/`, and (if the Kaggle CLI is on PATH) auto-submit to `spaceship-titanic`. Use `--no-kaggle` to skip uploads. Training automatically picks CUDA, MPS, or CPU devices.
 - After each submission the script polls `kaggle competitions submissions` (configurable via `--kaggle-score-timeout` / `--kaggle-score-interval`) and stores the public score plus the description tag inside `models/ga_search_summary.json` so next iterations can reuse leaderboard feedback even if you hit the daily submission cap. If the Kaggle CLI/network check fails the script logs a warning and skips the polling loop.
 - Debug the leaderboard polling manually with `python scripts/kaggle_submissions.py --competition spaceship-titanic`, which prints the same submission table the trainer queries.
