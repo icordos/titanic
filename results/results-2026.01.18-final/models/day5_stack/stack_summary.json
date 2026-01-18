@@ -1,0 +1,67 @@
+{
+  "meta_model": "logistic",
+  "meta_accuracy": 0.811917634878638,
+  "meta_log_loss": 0.4026369668817657,
+  "baseline_columns": [
+    "LR_pred",
+    "GB_pred"
+  ],
+  "models": [
+    {
+      "name": "ga_rank_1_ts_1768337411_logloss_0_3960",
+      "model_type": "extratrees",
+      "avg_log_loss": 0.39741895822311013
+    },
+    {
+      "name": "ga_rank_1_ts_1768344940_logloss_0_3887",
+      "model_type": "extratrees",
+      "avg_log_loss": 0.3961129672410928
+    },
+    {
+      "name": "ga_rank_3_ts_1768344941_logloss_0_3887",
+      "model_type": "extratrees",
+      "avg_log_loss": 0.4022439699705135
+    },
+    {
+      "name": "ga_rank_4_ts_1768344941_logloss_0_3887",
+      "model_type": "extratrees",
+      "avg_log_loss": 0.3968967264565916
+    },
+    {
+      "name": "ga_rank_6_ts_1768344943_logloss_0_3887",
+      "model_type": "extratrees",
+      "avg_log_loss": 0.4107109608863591
+    },
+    {
+      "name": "ga_rank_7_ts_1768344943_logloss_0_3889",
+      "model_type": "extratrees",
+      "avg_log_loss": 0.39526786573342154
+    },
+    {
+      "name": "ga_rank_8_ts_1768344944_logloss_0_3889",
+      "model_type": "extratrees",
+      "avg_log_loss": 0.3997924795376776
+    },
+    {
+      "name": "ga_rank_9_ts_1768344944_logloss_0_3889",
+      "model_type": "extratrees",
+      "avg_log_loss": 0.41208683291533077
+    },
+    {
+      "name": "ga_rank_10_ts_1768344944_logloss_0_3889",
+      "model_type": "rf",
+      "avg_log_loss": 0.4285040235385843
+    },
+    {
+      "name": "ga_rank_1_ts_1768489230_logloss_0_4002",
+      "model_type": "extratrees",
+      "avg_log_loss": 0.39527560544860263
+    },
+    {
+      "name": "ga_rank_2_ts_1768489232_logloss_0_4002",
+      "model_type": "extratrees",
+      "avg_log_loss": 0.3994706301460711
+    }
+  ],
+  "folds": 5
+}

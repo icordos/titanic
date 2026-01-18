@@ -1,0 +1,78 @@
+[
+  {
+    "rank": 1,
+    "val_log_loss": 0.3906682055851838,
+    "genome": {
+      "model_type": "mlp",
+      "num_layers": 1,
+      "layer_widths": [
+        32
+      ],
+      "activation": "relu",
+      "dropout": 0.17857651684601622,
+      "optimizer": "adam",
+      "learning_rate": 0.004600238847537216,
+      "weight_decay": 1.3582690559317536e-05,
+      "batch_size": 256,
+      "epochs": 30,
+      "gb_estimators": 300,
+      "gb_learning_rate": 0.2,
+      "gb_min_leaf": 200,
+      "rf_trees": 200,
+      "rf_max_depth": 7,
+      "rf_max_features": 0.7,
+      "rf_min_samples_split": 10,
+      "rf_sample_ratio": 0.6,
+      "rf_random_thresholds": false,
+      "hist_learning_rate": 0.04901347444101843,
+      "hist_max_depth": 5,
+      "hist_max_leaf_nodes": 63,
+      "hist_min_samples_leaf": 20,
+      "hist_l2_regularization": 0.03550299460376999,
+      "fitness": -0.3906682055851838
+    },
+    "model_path": "models/ga_nn_1_1768502994.pt",
+    "submission_path": "submissions/ga_nn_1_1768502994.csv",
+    "kaggle_description": "GA rank 1 ts 1768502994 logloss 0.3907",
+    "kaggle_submitted": false,
+    "kaggle_score": null
+  },
+  {
+    "rank": 2,
+    "val_log_loss": 0.3906682055851838,
+    "genome": {
+      "model_type": "mlp",
+      "num_layers": 1,
+      "layer_widths": [
+        128
+      ],
+      "activation": "relu",
+      "dropout": 0.1931677965355028,
+      "optimizer": "adam",
+      "learning_rate": 0.004086786292433925,
+      "weight_decay": 1.2498553731918357e-05,
+      "batch_size": 512,
+      "epochs": 15,
+      "gb_estimators": 200,
+      "gb_learning_rate": 0.3,
+      "gb_min_leaf": 100,
+      "rf_trees": 100,
+      "rf_max_depth": 4,
+      "rf_max_features": 0.7,
+      "rf_min_samples_split": 40,
+      "rf_sample_ratio": 0.8,
+      "rf_random_thresholds": false,
+      "hist_learning_rate": 0.05831251798458785,
+      "hist_max_depth": null,
+      "hist_max_leaf_nodes": 31,
+      "hist_min_samples_leaf": 100,
+      "hist_l2_regularization": 0.04817766206825223,
+      "fitness": -0.3906682055851838
+    },
+    "model_path": "models/ga_nn_2_1768502994.pt",
+    "submission_path": "submissions/ga_nn_2_1768502994.csv",
+    "kaggle_description": "GA rank 2 ts 1768502994 logloss 0.3907",
+    "kaggle_submitted": false,
+    "kaggle_score": null
+  }
+]

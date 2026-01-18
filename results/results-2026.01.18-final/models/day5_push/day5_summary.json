@@ -1,0 +1,6 @@
+{
+  "best_val_log_loss": 0.3878291710638209,
+  "best_submission": "submissions/ga_nn_1_1768584855.csv",
+  "meta_ensemble": "models/day5_push/day5_meta_lrgb.csv",
+  "ga_stacker_blend": "models/day5_push/day5_ga_stacker_blend.csv"
+}

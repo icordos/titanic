@@ -1,0 +1,38 @@
+[
+  {
+    "rank": 1,
+    "val_log_loss": 0.39602776290450176,
+    "genome": {
+      "model_type": "extratrees",
+      "num_layers": 4,
+      "layer_widths": [
+        512,
+        64,
+        512,
+        16
+      ],
+      "activation": "gelu",
+      "dropout": 0.4,
+      "optimizer": "adam",
+      "learning_rate": 0.003,
+      "weight_decay": 1e-05,
+      "batch_size": 128,
+      "epochs": 20,
+      "gb_estimators": 300,
+      "gb_learning_rate": 0.3,
+      "gb_min_leaf": 150,
+      "rf_trees": 200,
+      "rf_max_depth": 8,
+      "rf_max_features": 0.5,
+      "rf_min_samples_split": 40,
+      "rf_sample_ratio": 1.0,
+      "rf_random_thresholds": true,
+      "fitness": -0.39602776290450176
+    },
+    "model_path": "models/ga_nn_1_1768337411.pt",
+    "submission_path": "submissions/ga_nn_1_1768337411.csv",
+    "kaggle_description": "GA rank 1 ts 1768337411 logloss 0.3960",
+    "kaggle_submitted": false,
+    "kaggle_score": null
+  }
+]

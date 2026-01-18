@@ -1,0 +1,94 @@
+{
+  "groups": [
+    {
+      "name": "day2",
+      "num_files": 5,
+      "files": [
+        "submissions/ga_nn_1_1768502994.csv",
+        "submissions/ga_nn_2_1768502994.csv",
+        "submissions/ga_nn_1_1768489230.csv",
+        "submissions/ga_nn_2_1768489232.csv",
+        "submissions/ga_nn_3_1768489234.csv"
+      ]
+    },
+    {
+      "name": "historical",
+      "num_files": 11,
+      "files": [
+        "submissions/ga_nn_1_1768344940.csv",
+        "submissions/ga_nn_2_1768344941.csv",
+        "submissions/ga_nn_3_1768344941.csv",
+        "submissions/ga_nn_4_1768344941.csv",
+        "submissions/ga_nn_5_1768344943.csv",
+        "submissions/ga_nn_6_1768344943.csv",
+        "submissions/ga_nn_7_1768344943.csv",
+        "submissions/ga_nn_8_1768344944.csv",
+        "submissions/ga_nn_9_1768344944.csv",
+        "submissions/ga_nn_10_1768344944.csv",
+        "submissions/ga_stack_blend.csv"
+      ]
+    },
+    {
+      "name": "stacker",
+      "num_files": 1,
+      "files": [
+        "submissions/day3_stack_meta_submission_trimmed.csv"
+      ]
+    }
+  ],
+  "ensembles": [
+    {
+      "name": "ensemble_day2_stacker",
+      "path": "models/day4_ensembles/ensemble_day2_stacker.csv",
+      "components": [
+        "day2",
+        "stacker"
+      ]
+    },
+    {
+      "name": "ensemble_historical_stacker",
+      "path": "models/day4_ensembles/ensemble_historical_stacker.csv",
+      "components": [
+        "historical",
+        "stacker"
+      ]
+    },
+    {
+      "name": "ensemble_weighted_hybrid",
+      "path": "models/day4_ensembles/ensemble_weighted_hybrid.csv",
+      "components": [
+        "day2",
+        "historical",
+        "stacker"
+      ],
+      "weights": [
+        0.6,
+        0.2,
+        0.2
+      ]
+    },
+    {
+      "name": "ensemble_lowcorr_historical_stacker",
+      "path": "models/day4_ensembles/ensemble_lowcorr_historical_stacker.csv",
+      "components": [
+        "historical",
+        "stacker"
+      ],
+      "note": "Average of the least-correlated pair."
+    }
+  ],
+  "correlations": [
+    {
+      "pair": "day2__historical",
+      "pearson": 0.9727573197729692
+    },
+    {
+      "pair": "day2__stacker",
+      "pearson": 0.9156741767164505
+    },
+    {
+      "pair": "historical__stacker",
+      "pearson": 0.9012045105027756
+    }
+  ]
+}
